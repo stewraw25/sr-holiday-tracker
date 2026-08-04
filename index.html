@@ -402,6 +402,40 @@ var stream = null, pulling = false;
 
 function fbUrl(path){ return FB_URL + "/" + FB_ROOT + (path ? "/" + path : "") + ".json"; }
 
+/* ---- anonymous auth: a short-lived token, refreshed automatically ---- */
+var FB_KEY   = "AIzaSyBt0hu6IrlKm6fSTTvDhO3Qis5mrSA1bQ8";
+var TOKKEY   = "srHolidayTok_v1";
+var authTok  = null, authExp = 0, authPending = null;
+
+function loadTok(){
+  try{
+    var t=JSON.parse(localStorage.getItem(TOKKEY)||"null");
+    if(t && t.exp > Date.now()+60000){ authTok=t.tok; authExp=t.exp; }
+  }catch(e){}
+}
+function getToken(){
+  if(authTok && authExp > Date.now()+60000) return Promise.resolve(authTok);
+  if(authPending) return authPending;
+  authPending = fetch("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key="+FB_KEY,
+      {method:"POST",headers:{"Content-Type":"application/json"},
+       body:JSON.stringify({returnSecureToken:true})})
+    .then(function(r){ if(!r.ok) throw new Error("auth "+r.status); return r.json(); })
+    .then(function(d){
+      authTok=d.idToken;
+      authExp=Date.now() + ((+d.expiresIn||3600)-120)*1000;
+      try{ localStorage.setItem(TOKKEY, JSON.stringify({tok:authTok,exp:authExp})); }catch(e){}
+      authPending=null; return authTok;
+    })
+    .catch(function(e){ authPending=null; throw e; });
+  return authPending;
+}
+function authed(path){
+  return getToken().then(function(t){
+    return fbUrl(path) + "?auth=" + encodeURIComponent(t);
+  });
+}
+
+
 function setCloud(st){
   if(cloudState===st) return;
   cloudState = st;
@@ -417,7 +451,10 @@ function queueAdd(op){ var q=queueGet(); q.push(op); queuePut(q); }
 function send(method, path, body){
   var opts={method:method, headers:{"Content-Type":"application/json"}};
   if(body!==undefined) opts.body=JSON.stringify(body);
-  return fetch(fbUrl(path), opts).then(function(r){
+  return authed(path).then(function(u){
+    return fetch(u, opts);
+  }).then(function(r){
+    if(r.status===401||r.status===403){ authTok=null; authExp=0; throw new Error("auth expired"); }
     if(!r.ok) throw new Error("HTTP "+r.status);
     setCloud(true); return r;
   });
@@ -466,7 +503,11 @@ function pushAll(){
 function pullAll(){
   if(pulling) return Promise.resolve();
   pulling=true;
-  return fetch(fbUrl()).then(function(r){ return r.json(); }).then(function(d){
+  return authed("").then(function(u){ return fetch(u); })
+    .then(function(r){
+      if(r.status===401||r.status===403){ authTok=null; authExp=0; throw new Error("auth"); }
+      return r.json();
+    }).then(function(d){
     setCloud(true);
     if(!d || !d.staff) return pushAll();     /* first ever run — seed the cloud */
     applyRemote(d);
@@ -474,21 +515,34 @@ function pullAll(){
     .then(function(){ pulling=false; });
 }
 function startStream(){
-  if(!window.EventSource){ setInterval(pullAll, 20000); return; }
-  try{
-    stream = new EventSource(fbUrl());
-    stream.onopen  = function(){ setCloud(true); queueFlush(); };
-    stream.onerror = function(){ setCloud(false); };
-    var onEv = function(){ pullAll(); };
-    stream.addEventListener("put", onEv);
-    stream.addEventListener("patch", onEv);
-  }catch(e){ setInterval(pullAll, 20000); }
+  if(!window.EventSource){ setInterval(pullAll, 25000); return; }
+  authed("").then(function(u){
+    try{
+      if(stream) stream.close();
+      stream = new EventSource(u);
+      stream.onopen  = function(){ setCloud(true); queueFlush(); };
+      stream.onerror = function(){
+        setCloud(false);
+        if(stream) stream.close();
+        setTimeout(startStream, 15000);        /* token may have expired — reconnect */
+      };
+      var onEv = function(){ pullAll(); };
+      stream.addEventListener("put", onEv);
+      stream.addEventListener("patch", onEv);
+    }catch(e){ setInterval(pullAll, 25000); }
+  }).catch(function(){ setCloud(false); setTimeout(startStream, 20000); });
+  /* refresh the stream before the hour is up */
+  setTimeout(startStream, 50*60*1000);
 }
 window.addEventListener("online",  function(){ queueFlush().then(pullAll); });
+setInterval(function(){                       /* keep trying anything that didn't get through */
+  if(queueGet().length) queueFlush().then(pullAll);
+}, 60000);
 window.addEventListener("offline", function(){ setCloud(false); });
 
 function cloudBoot(){
   setCloud(null);
+  loadTok();
   queueFlush().then(pullAll).then(startStream);
 }
 
