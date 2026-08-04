@@ -375,8 +375,8 @@ tbody tr:hover{background:#fbfcfd}
 var COLS = ["#0d9ddb","#e8873a","#7c6ce0","#12a15c","#e2557b","#f0b429","#14b8c4","#8b5cf6"];
 
 /* ========== SEED ========== */
-var SHOW_HINTS = true;
-var SEED = { staff: [{"id": "stewart", "name": "Stewart Rawson", "pw": "sr123", "admin": true, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#0d9ddb"}, {"id": "adam", "name": "Adam Gobern", "pw": "adam123", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#e8873a"}, {"id": "morgan", "name": "Morgan Edwards", "pw": "morgan123", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#7c6ce0"}, {"id": "ryan", "name": "Ryan Harper", "pw": "ryan123", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#12a15c"}], bookings:[] };
+var SHOW_HINTS = false;
+var SEED = { staff: [{"id": "stewart", "name": "Stewart Rawson", "email": "info@stewartrawsonelectrical.co.uk", "admin": true, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#0d9ddb"}, {"id": "adam", "name": "Adam Gobern", "email": "ajg@stewartrawsonelectrical.co.uk", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#e8873a"}, {"id": "morgan", "name": "Morgan Edwards", "email": "me@stewartrawsonelectrical.co.uk", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#7c6ce0"}, {"id": "ryan", "name": "Ryan Harper", "email": "harperryansr@gmail.com", "admin": false, "days": 20, "bonus": 0, "carry": 0, "bday": "", "col": "#12a15c"}], bookings:[] };
 
 var KEY="srHoliday_v2", db=load(), me=null, view=new Date(), editId=null, pickCol=COLS[0];
 
@@ -402,39 +402,81 @@ var stream = null, pulling = false;
 
 function fbUrl(path){ return FB_URL + "/" + FB_ROOT + (path ? "/" + path : "") + ".json"; }
 
-/* ---- anonymous auth: a short-lived token, refreshed automatically ---- */
+/* ---- Firebase email + password auth. This app never stores a password. ---- */
 var FB_KEY   = "AIzaSyBt0hu6IrlKm6fSTTvDhO3Qis5mrSA1bQ8";
-var TOKKEY   = "srHolidayTok_v1";
-var authTok  = null, authExp = 0, authPending = null;
+var SESSKEY  = "srHolidaySession_v1";
+var authTok=null, authExp=0, authRefresh=null, authUid=null, authPending=null;
 
-function loadTok(){
-  try{
-    var t=JSON.parse(localStorage.getItem(TOKKEY)||"null");
-    if(t && t.exp > Date.now()+60000){ authTok=t.tok; authExp=t.exp; }
-  }catch(e){}
+function saveSession(){
+  try{ localStorage.setItem(SESSKEY,JSON.stringify({r:authRefresh,u:authUid,who:me?me.id:null})); }catch(e){}
 }
-function getToken(){
-  if(authTok && authExp > Date.now()+60000) return Promise.resolve(authTok);
+function clearSession(){
+  authTok=null;authExp=0;authRefresh=null;authUid=null;
+  try{ localStorage.removeItem(SESSKEY); }catch(e){}
+}
+function idp(url,body,form){
+  return fetch(url,{method:"POST",
+    headers:{"Content-Type": form?"application/x-www-form-urlencoded":"application/json"},
+    body: form?body:JSON.stringify(body)})
+   .then(function(r){ return r.json().then(function(d){
+      if(!r.ok) throw new Error((d.error&&d.error.message)||"REQUEST_FAILED");
+      return d; }); });
+}
+function signIn(email,password){
+  return idp("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key="+FB_KEY,
+             {email:email,password:password,returnSecureToken:true})
+   .then(function(d){
+      authTok=d.idToken; authRefresh=d.refreshToken; authUid=d.localId;
+      authExp=Date.now()+((+d.expiresIn||3600)-120)*1000;
+      return d; });
+}
+function refreshAuth(){
+  if(!authRefresh) return Promise.reject(new Error("NO_SESSION"));
   if(authPending) return authPending;
-  authPending = fetch("https://identitytoolkit.googleapis.com/v1/accounts:signUp?key="+FB_KEY,
-      {method:"POST",headers:{"Content-Type":"application/json"},
-       body:JSON.stringify({returnSecureToken:true})})
-    .then(function(r){ if(!r.ok) throw new Error("auth "+r.status); return r.json(); })
-    .then(function(d){
-      authTok=d.idToken;
-      authExp=Date.now() + ((+d.expiresIn||3600)-120)*1000;
-      try{ localStorage.setItem(TOKKEY, JSON.stringify({tok:authTok,exp:authExp})); }catch(e){}
-      authPending=null; return authTok;
-    })
-    .catch(function(e){ authPending=null; throw e; });
+  var tried=authRefresh;                       /* remember which token we are refreshing */
+  authPending=idp("https://securetoken.googleapis.com/v1/token?key="+FB_KEY,
+      "grant_type=refresh_token&refresh_token="+encodeURIComponent(tried), true)
+   .then(function(d){
+      authTok=d.id_token; authRefresh=d.refresh_token; authUid=d.user_id;
+      authExp=Date.now()+((+d.expires_in||3600)-120)*1000;
+      saveSession(); authPending=null; return authTok; })
+   .catch(function(e){
+      authPending=null;
+      /* if someone has signed in since we started, leave their session alone */
+      if(authRefresh===tried) clearSession();
+      throw e; });
   return authPending;
 }
-function authed(path){
-  return getToken().then(function(t){
-    return fbUrl(path) + "?auth=" + encodeURIComponent(t);
-  });
+function getToken(){
+  if(authTok && authExp>Date.now()) return Promise.resolve(authTok);
+  return refreshAuth();
 }
-
+function changePassword(newPw){
+  return getToken().then(function(t){
+    return idp("https://identitytoolkit.googleapis.com/v1/accounts:update?key="+FB_KEY,
+               {idToken:t,password:newPw,returnSecureToken:true});
+  }).then(function(d){
+    if(d.idToken){ authTok=d.idToken; authRefresh=d.refreshToken||authRefresh;
+      authExp=Date.now()+((+d.expiresIn||3600)-120)*1000; saveSession(); }
+    return d; });
+}
+function sendReset(email){
+  return idp("https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key="+FB_KEY,
+             {requestType:"PASSWORD_RESET",email:email});
+}
+function authed(path){
+  return getToken().then(function(t){ return fbUrl(path)+"?auth="+encodeURIComponent(t); });
+}
+function friendlyAuthError(m){
+  m=String(m||"");
+  if(m.indexOf("INVALID_LOGIN")>-1||m.indexOf("INVALID_PASSWORD")>-1||m.indexOf("MISSING_PASSWORD")>-1)
+    return "That password isn't right — have another go.";
+  if(m.indexOf("EMAIL_NOT_FOUND")>-1) return "No account for that person yet. Ask Stewart.";
+  if(m.indexOf("TOO_MANY_ATTEMPTS")>-1) return "Too many tries. Wait a minute, then try again.";
+  if(m.indexOf("WEAK_PASSWORD")>-1) return "Password needs to be at least 6 characters.";
+  if(m.indexOf("Failed to fetch")>-1||m.indexOf("NetworkError")>-1) return "No connection — check you're online.";
+  return "Couldn't sign in. Try again in a moment.";
+}
 
 function setCloud(st){
   if(cloudState===st) return;
@@ -443,7 +485,6 @@ function setCloud(st){
   if(d) d.className = "cdot " + (st===true?"ok":st===false?"bad":"wait");
   if(t) t.textContent = st===true?"Synced":st===false?"Offline":"Connecting";
 }
-
 function queueGet(){ try{ return JSON.parse(localStorage.getItem(QKEY)||"[]"); }catch(e){ return []; } }
 function queuePut(q){ localStorage.setItem(QKEY, JSON.stringify(q.slice(-200))); }
 function queueAdd(op){ var q=queueGet(); q.push(op); queuePut(q); }
@@ -542,7 +583,6 @@ window.addEventListener("offline", function(){ setCloud(false); });
 
 function cloudBoot(){
   setCloud(null);
-  loadTok();
   queueFlush().then(pullAll).then(startStream);
 }
 
@@ -663,13 +703,11 @@ function fillLogin(){
     var o=document.createElement("option"); o.value=p.id;
     o.textContent=p.name+(p.admin?"  ·  admin":""); s.appendChild(o);
   });
-  if(SHOW_HINTS){
-    keys.innerHTML='<div style="margin-bottom:6px;font-weight:700;color:var(--ink-2)">Sign-in details</div>'+
-      db.staff.map(function(p){ return '<div><b>'+esc(p.name)+'</b><code>'+esc(p.pw)+'</code></div>'; }).join("");
-  } else {
-    keys.innerHTML='<div style="font-size:11.5px;line-height:1.6">Forgotten your password? Ask Stewart — '+
-      'he can see and reset it under Staff &amp; settings.</div>';
-  }
+  keys.innerHTML='<div style="text-align:center;font-size:12.5px">'+
+    '<a href="#" onclick="forgotPassword();return false;" style="color:var(--accent,#0d9ddb);'+
+    'text-decoration:none;font-weight:650">Forgotten your password?</a>'+
+    '<div style="margin-top:8px;color:var(--ink-3);font-size:11.5px;line-height:1.6">'+
+    'Pick your name first, then tap the link — we\'ll email you a way to set a new one.</div></div>';
 }
 function firstAdmin(){
   var n=prompt("Your full name:"); if(!n) return;
@@ -695,15 +733,24 @@ document.getElementById("inBtn").onclick=doLogin;
 document.getElementById("pw").addEventListener("keydown",function(e){ if(e.key==="Enter") doLogin(); });
 
 function doLogin(){
-  var id=document.getElementById("who").value, pw=document.getElementById("pw").value, er=document.getElementById("lerr");
+  var id=document.getElementById("who").value, pw=document.getElementById("pw").value;
+  var er=document.getElementById("lerr"), btn=document.getElementById("inBtn");
   var s=byId(id);
   if(!s){ er.textContent="Choose your name first."; er.classList.add("on"); return; }
-  if(pw!==s.pw){ er.textContent="That password isn't right — have another go."; er.classList.add("on"); return; }
-  er.classList.remove("on"); me=s;
-  document.getElementById("login").style.display="none";
-  document.getElementById("app").style.display="block";
-  document.getElementById("pw").value="";
-  paintMeChip(); buildNav(); renderAll();
+  if(!s.email){ er.textContent="No email set up for "+s.name+" yet. Ask Stewart."; er.classList.add("on"); return; }
+  if(!pw){ er.textContent="Type your password."; er.classList.add("on"); return; }
+  er.classList.remove("on"); btn.disabled=true; btn.textContent="Signing in…";
+  signIn(s.email,pw).then(function(){
+    btn.disabled=false; btn.textContent="Sign in";
+    me=s; saveSession();
+    document.getElementById("login").style.display="none";
+    document.getElementById("app").style.display="block";
+    document.getElementById("pw").value="";
+    paintMeChip(); buildNav(); renderAll(); cloudBoot();
+  }, function(e){
+    btn.disabled=false; btn.textContent="Sign in";
+    er.textContent=friendlyAuthError(e.message); er.classList.add("on");
+  });
 }
 function paintMeChip(){
   document.getElementById("meAv").textContent=ini(me.name);
@@ -711,8 +758,33 @@ function paintMeChip(){
   document.getElementById("meNm").textContent=me.name;
   document.getElementById("yrLab").textContent=hyLabel()+" · 1 Apr – 31 Mar";
 }
+function forgotPassword(){
+  var s=byId(document.getElementById("who").value);
+  if(!s||!s.email) return alert("Pick your name first.");
+  sendReset(s.email).then(function(){
+    alert("Sent. Check "+s.email+" for a link to set a new password.");
+  }).catch(function(){ alert("Couldn't send that. Check you're online."); });
+}
+function resumeSession(){
+  var sess=null;
+  try{ sess=JSON.parse(localStorage.getItem(SESSKEY)||"null"); }catch(e){}
+  if(!sess||!sess.r||!sess.who) return false;
+  authRefresh=sess.r; authUid=sess.u;
+  var s=byId(sess.who); if(!s) return false;
+  refreshAuth().then(function(){
+    if(me) return;                             /* already signed in manually — don't interfere */
+    me=s;
+    document.getElementById("login").style.display="none";
+    document.getElementById("app").style.display="block";
+    paintMeChip(); buildNav(); renderAll(); cloudBoot();
+  }).catch(function(){});                      /* refreshAuth already tidied up if needed */
+  return true;
+}
 document.getElementById("outBtn").onclick=function(){
-  me=null; document.getElementById("app").style.display="none";
+  me=null; clearSession();
+  if(stream){ try{ stream.close(); }catch(e){} stream=null; }
+  setCloud(null);
+  document.getElementById("app").style.display="none";
   document.getElementById("login").style.display="flex"; fillLogin();
 };
 
@@ -908,7 +980,7 @@ function del(id){ if(!confirm("Delete this booking?")) return;
 
 function renderStaff(){
   if(!me.admin) return;
-  var t='<div class="tw"><table><thead><tr><th>Name</th><th>Allowance</th><th>Used</th><th>Left</th><th>Password</th><th></th></tr></thead><tbody>';
+  var t='<div class="tw"><table><thead><tr><th>Name</th><th>Allowance</th><th>Used</th><th>Left</th><th>Email</th><th></th></tr></thead><tbody>';
   db.staff.forEach(function(s){
     var u=used(s.id), e=ent(s);
     t+='<tr><td><div class="who-cell"><div class="av" style="background:'+s.col+
@@ -916,11 +988,19 @@ function renderStaff(){
        (s.admin?' <span class="tag t-approved">admin</span>':'')+'</div></td>'+
        '<td>'+s.days+(s.bonus?' <span style="color:var(--ok)">+'+s.bonus+'</span>':'')+
        (s.carry?' <span style="color:var(--ink-3)">+'+s.carry+' carried</span>':'')+'</td>'+
-       '<td>'+u+'</td><td><b>'+(e-u)+'</b></td><td><code style="background:var(--bg);padding:2px 7px;border-radius:5px;font-size:12px">'+esc(s.pw)+'</code></td>'+
-       '<td style="text-align:right;white-space:nowrap"><button class="btn btn-g btn-s" onclick="openStaff(\''+s.id+'\')">Edit</button> '+
+       '<td>'+u+'</td><td><b>'+(e-u)+'</b></td><td style="color:var(--ink-3);font-size:12.5px">'+esc(s.email||"—")+'</td>'+
+       '<td style="text-align:right;white-space:nowrap">'+
+       (s.email?'<button class="btn btn-g btn-s" onclick="adminReset(\''+s.id+'\')">Send reset</button> ':'')+
+       '<button class="btn btn-g btn-s" onclick="openStaff(\''+s.id+'\')">Edit</button> '+
        (s.admin?'':'<button class="btn btn-d btn-s" onclick="delStaff(\''+s.id+'\')">Remove</button>')+'</td></tr>';
   });
   document.getElementById("staffBox").innerHTML=t+'</tbody></table></div>';
+}
+function adminReset(id){
+  var s=byId(id); if(!s||!s.email) return;
+  if(!confirm("Email "+s.name+" a link to set a new password?")) return;
+  sendReset(s.email).then(function(){ alert("Sent to "+s.email+"."); })
+    .catch(function(e){ alert(friendlyAuthError(e.message)); });
 }
 function delStaff(id){
   if(!confirm("Remove this employee and all their bookings?")) return;
@@ -1026,7 +1106,7 @@ function openStaff(id){
   document.getElementById("stDays").value=s?s.days:20;
   document.getElementById("stBonus").value=s?s.bonus:0;
   document.getElementById("stCarry").value=s?s.carry:0;
-  document.getElementById("stPw").value=s?s.pw:"";
+  document.getElementById("stPw").value=s?(s.email||""):"";
   document.getElementById("stBday").value=s?s.bday:"";
   pickCol = s?s.col:COLS[db.staff.length%COLS.length];
   document.getElementById("stCols").innerHTML=COLS.map(function(c){
@@ -1041,18 +1121,18 @@ function setCol(c){
 }
 function saveStaff(){
   var n=document.getElementById("stName").value.trim(), p=document.getElementById("stPw").value.trim();
-  if(!n||!p) return alert("Name and password are both needed.");
+  if(!n||!p) return alert("Name and work email are both needed.");
   var d=+document.getElementById("stDays").value||0, bo=+document.getElementById("stBonus").value||0;
   var ca=Math.min(+document.getElementById("stCarry").value||0,5), bd=document.getElementById("stBday").value;
   var rec;
   if(editId){
-    var s=byId(editId); s.name=n; s.pw=p; s.days=d; s.bonus=bo; s.carry=ca; s.bday=bd; s.col=pickCol;
+    var s=byId(editId); s.name=n; s.email=p; s.days=d; s.bonus=bo; s.carry=ca; s.bday=bd; s.col=pickCol;
     if(me.id===s.id){ me=s; paintMeChip(); }
     rec=s;
   } else {
     var base=n.toLowerCase().replace(/[^a-z]/g,"").slice(0,10)||"staff", id=base, k=2;
     while(byId(id)){ id=base+k; k++; }
-    rec={id:id,name:n,pw:p,admin:false,days:d,bonus:bo,carry:ca,bday:bd,col:pickCol};
+    rec={id:id,name:n,email:p,admin:false,days:d,bonus:bo,carry:ca,bday:bd,col:pickCol};
     db.staff.push(rec);
   }
   save(); cloudSend("PUT","staff/"+rec.id,rec); closeM("m-staff"); renderAll();
@@ -1060,9 +1140,11 @@ function saveStaff(){
 
 document.getElementById("pwBtn").onclick=function(){ document.getElementById("npw").value=""; openM("m-pw"); };
 function savePw(){
-  var v=document.getElementById("npw").value.trim(); if(!v) return alert("Type a new password.");
-  me.pw=v; save(); cloudSend("PATCH","staff/"+me.id,{pw:v});
-  closeM("m-pw"); renderStaff(); alert("Password updated.");
+  var v=document.getElementById("npw").value.trim();
+  if(v.length<6) return alert("Password needs to be at least 6 characters.");
+  changePassword(v).then(function(){
+    closeM("m-pw"); alert("Password updated.");
+  }).catch(function(e){ alert(friendlyAuthError(e.message)); });
 }
 function openBday(){ document.getElementById("bdVal").value=me.bday||""; openM("m-bday"); }
 function saveBday(){ me.bday=document.getElementById("bdVal").value;
@@ -1082,7 +1164,7 @@ function exportCsv(){
 });
 
 fillLogin();
-cloudBoot();
+if(!resumeSession()) setCloud(null);
 </script>
 </body>
 </html>

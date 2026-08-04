@@ -31,6 +31,14 @@ Works with no signal too: changes are saved on the device and sent up
 automatically once you're back online. The chip in the top bar shows
 **Synced** or **Offline** so you always know where you stand.
 
+## Sign in
+
+Each person has their own Firebase account. Passwords are handled by Firebase —
+hashed, never stored in this repository and never written to the database.
+Forgotten one? Pick your name on the login screen and tap **Forgotten your
+password?** for an email link. Stewart can also send a reset from
+**Staff & settings**.
+
 ## For integrations
 
 Data lives under `/sr-holiday/v1` in the Realtime Database:
