@@ -317,7 +317,9 @@ tbody tr:hover{background:#fbfcfd}
   </select></div>
   <div class="field"><label>Note (optional)</label><input type="text" id="bkNote" placeholder="e.g. Spain with the family"></div>
   <div class="note" id="bkCount">Pick your dates to see how many days it uses.</div>
-  <div class="mact"><button class="btn btn-g" onclick="closeM('m-book')">Cancel</button>
+  <div class="mact">
+    <button class="btn btn-d" id="bkDel" style="display:none;flex:0 0 auto" onclick="deleteFromModal()">Delete</button>
+    <button class="btn btn-g" onclick="closeM('m-book')">Cancel</button>
     <button class="btn btn-p" onclick="saveBook()">Save</button></div>
 </div></div>
 
@@ -977,8 +979,11 @@ function table(list,act){
     if(act&&b.status==="pending"){
       t+='<button class="btn btn-p btn-s" onclick="decide(\''+b.id+'\',\'approved\')">Approve</button> '+
          '<button class="btn btn-d btn-s" onclick="decide(\''+b.id+'\',\'rejected\')">Reject</button>';
-    } else if(me.admin||b.staff===me.id){
-      t+='<button class="btn btn-d btn-s" onclick="del(\''+b.id+'\')">Delete</button>';
+    }
+    if(me.admin||b.staff===me.id){
+      t+=(act&&b.status==="pending"?' ':'')+
+         '<button class="btn btn-g btn-s" onclick="openBook(\''+b.id+'\')">Edit</button> '+
+         '<button class="btn btn-d btn-s" onclick="del(\''+b.id+'\')">Delete</button>';
     }
     t+='</td></tr>';
   });
@@ -1032,16 +1037,38 @@ function wipe(){
 function openM(i){ document.getElementById(i).classList.add("on"); }
 function closeM(i){ document.getElementById(i).classList.remove("on"); }
 
-function openBook(){
-  document.getElementById("bkTitle").textContent = me.admin?"Add time off":"Request time off";
+var editingBooking=null;
+function openBook(bookingId){
+  var b=null;
+  if(bookingId){ for(var i=0;i<db.bookings.length;i++) if(db.bookings[i].id===bookingId) b=db.bookings[i]; }
+  editingBooking = b ? b.id : null;
+  document.getElementById("bkTitle").textContent =
+    b ? "Edit time off" : (me.admin?"Add time off":"Request time off");
   var f=document.getElementById("bkWhoF");
   if(me.admin){
-    f.style.display="block"; var s=document.getElementById("bkWho"); s.innerHTML="";
-    db.staff.forEach(function(p){ var o=document.createElement("option"); o.value=p.id; o.textContent=p.name; s.appendChild(o); });
+    f.style.display="block"; var sel=document.getElementById("bkWho"); sel.innerHTML="";
+    db.staff.forEach(function(p){ var o=document.createElement("option"); o.value=p.id; o.textContent=p.name; sel.appendChild(o); });
+    if(b) sel.value=b.staff;
   } else f.style.display="none";
-  ["bkFrom","bkTo","bkNote"].forEach(function(i){ document.getElementById(i).value=""; });
-  document.getElementById("bkCount").textContent="Pick your dates to see how many days it uses.";
+  if(b){
+    document.getElementById("bkFrom").value=b.dates[0]||"";
+    document.getElementById("bkTo").value=b.dates[b.dates.length-1]||"";
+    document.getElementById("bkNote").value=b.note||"";
+    document.getElementById("bkType").value=b.type||"vac";
+    preview();
+  } else {
+    ["bkFrom","bkTo","bkNote"].forEach(function(i){ document.getElementById(i).value=""; });
+    document.getElementById("bkType").value="vac";
+    document.getElementById("bkCount").textContent="Pick your dates to see how many days it uses.";
+  }
+  document.getElementById("bkDel").style.display = b ? "inline-flex" : "none";
   openM("m-book");
+}
+function deleteFromModal(){
+  if(!editingBooking) return;
+  var id=editingBooking;
+  closeM("m-book");
+  del(id);
 }
 ["bkFrom","bkTo","bkType"].forEach(function(i){ document.getElementById(i).addEventListener("change",preview); });
 function breakdown(f,t){
@@ -1079,8 +1106,20 @@ function saveBook(){
     var s=byId(who), left=ent(s)-used(who);
     if(dates.length>left && !confirm(dates.length+" days requested but only "+left+" left. Book it anyway?")) return;
   }
+  var note=document.getElementById("bkNote").value.trim();
+  if(editingBooking){
+    var ex=null;
+    for(var i=0;i<db.bookings.length;i++) if(db.bookings[i].id===editingBooking) ex=db.bookings[i];
+    if(ex){
+      ex.staff=who; ex.type=type; ex.dates=dates; ex.note=note;
+      /* an employee changing an approved booking sends it back for approval */
+      if(!me.admin && ex.status==="approved") ex.status="pending";
+      save(); cloudSend("PUT","bookings/"+ex.id,ex);
+    }
+    editingBooking=null; closeM("m-book"); renderAll(); return;
+  }
   var bk={id:"b"+Date.now()+Math.floor(Math.random()*999),staff:who,type:type,dates:dates,
-    note:document.getElementById("bkNote").value.trim(),status:me.admin?"approved":"pending"};
+    note:note,status:me.admin?"approved":"pending"};
   db.bookings.push(bk);
   save(); cloudSend("PUT","bookings/"+bk.id,bk); closeM("m-book"); renderAll();
 }
