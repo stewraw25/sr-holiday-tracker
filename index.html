@@ -385,9 +385,23 @@ function load(){
     var r=localStorage.getItem(KEY); if(!r) return clone(SEED);
     var d=JSON.parse(r); if(!d.staff||!d.staff.length) return clone(SEED);
     if(!d.bookings) d.bookings=[];
-    d.staff.forEach(function(s,i){ if(!s.col) s.col=COLS[i%COLS.length]; });
+    backfillStaff(d.staff);
     return d;
   }catch(e){ return clone(SEED); }
+}
+function backfillStaff(list){
+  var seed=SEED.staff||[];
+  list.forEach(function(x,i){
+    var base=null;
+    for(var k=0;k<seed.length;k++) if(seed[k].id===x.id){ base=seed[k]; break; }
+    if(base){
+      if(!x.email) x.email=base.email;
+      if(!x.name)  x.name=base.name;
+      if(x.admin===undefined) x.admin=base.admin;
+    }
+    if(!x.col) x.col=COLS[i%COLS.length];
+  });
+  return list;
 }
 function clone(o){ return JSON.parse(JSON.stringify(o)); }
 function save(){ localStorage.setItem(KEY, JSON.stringify(db)); }
@@ -521,10 +535,7 @@ function toArr(o){
 function applyRemote(d){
   var staff = toArr(d && d.staff);
   var books = toArr(d && d.bookings);
-  if(staff.length){
-    staff.forEach(function(s,i){ if(!s.col) s.col=COLS[i%COLS.length]; });
-    db.staff = staff;
-  }
+  if(staff.length){ db.staff = backfillStaff(staff); }
   db.bookings = books.map(function(b){
     if(b.dates && !Array.isArray(b.dates)) b.dates = toArr(b.dates).map(function(x){ return x.id?b.dates[x.id]:x; });
     if(!b.dates) b.dates=[];
@@ -760,7 +771,8 @@ function paintMeChip(){
 }
 function forgotPassword(){
   var s=byId(document.getElementById("who").value);
-  if(!s||!s.email) return alert("Pick your name first.");
+  if(!s) return alert("Pick your name from the list first.");
+  if(!s.email) return alert("No email is set up for "+s.name+" yet — ask Stewart to add one under Staff & settings.");
   sendReset(s.email).then(function(){
     alert("Sent. Check "+s.email+" for a link to set a new password.");
   }).catch(function(){ alert("Couldn't send that. Check you're online."); });
