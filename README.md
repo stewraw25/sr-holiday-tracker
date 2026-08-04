@@ -21,12 +21,22 @@ Open the link on your phone, tablet or computer. On a phone:
 - Add and remove staff, set allowances, grant extra days
 - Export to CSV
 
-## Important — data is per device
+## Syncs across every device
 
-Bookings are stored in the browser on the device that made them. They do
-**not** sync between phones, tablets or computers yet. A shared cloud version
-is being built; until then, one device should be treated as the master.
+Bookings are held in a Firebase Realtime Database and sync live between phones,
+tablets, Macs and PCs. Book on one, it appears on the others within seconds —
+no refresh needed.
 
-## Privacy
+Works with no signal too: changes are saved on the device and sent up
+automatically once you're back online. The chip in the top bar shows
+**Synced** or **Offline** so you always know where you stand.
 
-No servers, no tracking, no analytics. Everything stays in your browser.
+## For integrations
+
+Data lives under `/sr-holiday/v1` in the Realtime Database:
+
+    /sr-holiday/v1/staff/{id}      name, allowance, bonus, carry-over, colour
+    /sr-holiday/v1/bookings/{id}   staff, type (vac|sick|other), dates[], status, note
+
+Anything that speaks HTTP can read and write it, which is how the Buzz agent
+adds and removes holidays without anyone logging in.
