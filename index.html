@@ -953,19 +953,60 @@ function renderCal(){
   }).join("");
 }
 
+var reqWho="all", reqWhen="upcoming";
+function setReqFilter(){
+  reqWho=document.getElementById("fWho").value;
+  reqWhen=document.getElementById("fWhen").value;
+  renderReq();
+}
 function renderReq(){
   var admin=me.admin;
-  document.getElementById("reqHi").textContent = admin?"Requests to approve":"My requests";
+  document.getElementById("reqHi").textContent = admin?"Everyone's time off":"My requests";
   document.getElementById("reqSub").textContent = admin
-    ? "Anything the lads have asked for lands here." : "Everything you've asked for and where it's up to.";
-  var list = admin ? db.bookings.filter(function(b){return b.status==="pending";})
-                   : db.bookings.filter(function(b){return b.staff===me.id;});
-  list.sort(function(a,b){ return a.dates[0]<b.dates[0]?-1:1; });
-  document.getElementById("reqBox").innerHTML = list.length ? table(list,admin)
-    : '<div class="empty"><span class="e">'+(admin?"✅":"📭")+'</span>'+
-      (admin?"Nothing waiting on you. All clear.":"You haven't requested anything yet.")+'</div>';
-}
+    ? "Approve what's waiting, and change or cancel anything already booked."
+    : "Everything you've asked for and where it's up to.";
 
+  if(!admin){
+    var mine=db.bookings.filter(function(b){return b.staff===me.id;})
+              .sort(function(a,b){ return a.dates[0]<b.dates[0]?1:-1; });
+    document.getElementById("reqBox").innerHTML = mine.length ? table(mine,false)
+      : '<div class="empty"><span class="e">📭</span>You haven\'t requested anything yet.</div>';
+    return;
+  }
+
+  var html="";
+  var pend=db.bookings.filter(function(b){return b.status==="pending";})
+            .sort(function(a,b){ return a.dates[0]<b.dates[0]?-1:1; });
+  html+='<h3 class="sec" style="margin-top:0">Waiting for you'+(pend.length?' ('+pend.length+')':'')+'</h3>';
+  html+= pend.length ? table(pend,true)
+    : '<div class="empty" style="padding:26px"><span class="e">✅</span>Nothing waiting. All clear.</div>';
+
+  html+='<h3 class="sec">All bookings</h3>';
+  html+='<div class="tools">'+
+    '<select id="fWho" onchange="setReqFilter()" style="width:auto;min-width:150px">'+
+      '<option value="all">Everyone</option>'+
+      db.staff.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join("")+
+    '</select>'+
+    '<select id="fWhen" onchange="setReqFilter()" style="width:auto;min-width:150px">'+
+      '<option value="upcoming">From today onwards</option>'+
+      '<option value="all">Everything, including past</option>'+
+    '</select></div>';
+
+  var today=ymd(new Date());
+  var all=db.bookings.filter(function(b){
+    if(reqWho!=="all" && b.staff!==reqWho) return false;
+    if(reqWhen==="upcoming" && b.dates[b.dates.length-1] < today) return false;
+    return true;
+  }).sort(function(a,b){ return a.dates[0]<b.dates[0]?-1:1; });
+
+  html+= all.length ? table(all,false)
+    : '<div class="empty" style="padding:26px"><span class="e">🗓️</span>Nothing booked for that.</div>';
+
+  document.getElementById("reqBox").innerHTML=html;
+  var w=document.getElementById("fWho"), n=document.getElementById("fWhen");
+  if(w) w.value=reqWho;
+  if(n) n.value=reqWhen;
+}
 function table(list,act){
   var t='<div class="tw"><table><thead><tr><th>Who</th><th>Dates</th><th>Days</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>';
   list.forEach(function(b){
