@@ -138,6 +138,10 @@ h3.sec{font-size:15px;font-weight:750;margin:28px 0 12px;letter-spacing:-.2px}
 .ev{display:flex;align-items:center;gap:5px;font-size:10.5px;font-weight:650;padding:2px 6px 2px 4px;
   border-radius:6px;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ev i{width:5px;height:5px;border-radius:50%;flex:0 0 auto;background:currentColor}
+.ev.click{cursor:pointer}
+.ev.click:hover{filter:brightness(.92)}
+.lg.click{cursor:pointer}
+.lg.click:hover{border-color:var(--blue);color:var(--blue)}
 .ev.pend{opacity:.62;border:1px dashed currentColor}
 .more{font-size:10px;color:var(--ink-3);font-weight:650;padding-left:4px}
 .legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
@@ -936,11 +940,14 @@ function renderCal(){
       if(b.status==="rejected") return;
       if(b.dates.indexOf(s)===-1) return;
       var p=byId(b.staff); if(!p) return;
-      evs.push({p:p,t:b.type,st:b.status,note:b.note});
+      evs.push({id:b.id,p:p,t:b.type,st:b.status,note:b.note});
     });
     evs.slice(0,3).forEach(function(e){
-      h+='<span class="ev'+(e.st==="pending"?" pend":"")+'" style="color:'+e.p.col+
-         ';background:'+e.p.col+'14" title="'+esc(e.p.name)+' – '+tName(e.t)+(e.note?" – "+esc(e.note):"")+'">'+
+      var canEdit = me && (me.admin || e.p.id===me.id);
+      h+='<span class="ev'+(e.st==="pending"?" pend":"")+(canEdit?" click":"")+'" style="color:'+e.p.col+
+         ';background:'+e.p.col+'14" title="'+esc(e.p.name)+' – '+tName(e.t)+(e.note?" – "+esc(e.note):"")+
+         (canEdit?" – tap to edit":"")+'"'+
+         (canEdit?' onclick="openBook(\''+e.id+'\')"':'')+'>'+
          '<i></i>'+tEmoji(e.t)+' '+esc(first(e.p.name))+'</span>';
     });
     if(evs.length>3) h+='<span class="more">+'+(evs.length-3)+' more</span>';
@@ -949,7 +956,8 @@ function renderCal(){
   }
 
   document.getElementById("calLegend").innerHTML = db.staff.map(function(p){
-    return '<span class="lg"><i style="background:'+p.col+'"></i>'+esc(p.name)+'</span>';
+    var click = me && me.admin ? ' class="lg click" onclick="jumpToPerson(\''+p.id+'\')" title="See and edit '+esc(first(p.name))+'\'s bookings"' : ' class="lg"';
+    return '<span'+click+'><i style="background:'+p.col+'"></i>'+esc(p.name)+'</span>';
   }).join("");
 }
 
@@ -957,6 +965,12 @@ var reqWho="all", reqWhen="upcoming";
 function setReqFilter(){
   reqWho=document.getElementById("fWho").value;
   reqWhen=document.getElementById("fWhen").value;
+  renderReq();
+}
+function jumpToPerson(id){
+  reqWho=id; reqWhen="upcoming";
+  var bs=document.querySelectorAll(".nav button");
+  for(var i=0;i<bs.length;i++) if(bs[i].textContent==="Requests"){ bs[i].click(); break; }
   renderReq();
 }
 function renderReq(){
